@@ -1,16 +1,17 @@
 import {
-  encodeFunctionData,
+  createWalletClient,
   erc20Abi,
   formatUnits,
+  http,
   isAddress,
   parseUnits,
+  publicActions,
   type Abi,
   type AbiFunction,
-  type Account,
   type PublicActions,
   type WalletClient,
-} from "viem";
-import type { z } from "zod";
+} from 'viem';
+import type { z } from 'zod';
 import type {
   CallContractSchema,
   DeployPropertyNFTSchema,
@@ -18,19 +19,21 @@ import type {
   DeployPropertyYieldVaultSchema,
   Erc20BalanceSchema,
   Erc20TransferSchema,
-} from "./schemas.js";
-import { constructRskScanUrl } from "../utils/index.js";
-import { rootstock } from "viem/chains";
-import { PropertyNFT } from "../contracts/PropertyNFT.js";
-import { PropertyToken } from "../contracts/PropertyToken.js";
-import { PropertyYieldVault } from "../contracts/PropertyYieldVault.js";
+  GetNativeBalanceSchema,
+} from './schemas.js';
+import { constructRskScanUrl } from '../utils/index.js';
+import { rootstock, rootstockTestnet } from 'viem/chains';
+import { PropertyNFT } from '../contracts/PropertyNFT.js';
+import { PropertyToken } from '../contracts/PropertyToken.js';
+import { PropertyYieldVault } from '../contracts/PropertyYieldVault.js';
+import { RSK_RPC_URL, RSK_RPC_URL_TESTNET } from '../lib/constants.js';
 
 export async function deployPropertyNFTHandler(
   wallet: WalletClient & PublicActions,
   args: z.infer<typeof DeployPropertyNFTSchema>
 ): Promise<string> {
   if (!wallet.account?.address) {
-    throw new Error("No account address available");
+    throw new Error('No account address available');
   }
   const hash = await wallet.deployContract({
     abi: PropertyNFT.abi,
@@ -51,7 +54,7 @@ export async function deployPropertyTokenHandler(
   args: z.infer<typeof DeployPropertyTokenSchema>
 ): Promise<string> {
   if (!wallet.account?.address) {
-    throw new Error("No account address available");
+    throw new Error('No account address available');
   }
 
   // Validate addresses
@@ -84,7 +87,7 @@ export async function deployPropertyYieldVaultHandler(
   args: z.infer<typeof DeployPropertyYieldVaultSchema>
 ): Promise<string> {
   if (!wallet.account?.address) {
-    throw new Error("No account address available");
+    throw new Error('No account address available');
   }
 
   // Validate addresses
@@ -120,7 +123,7 @@ export async function getAddressHandler(
   wallet: WalletClient & PublicActions
 ): Promise<string> {
   if (!wallet.account?.address) {
-    throw new Error("No account address available");
+    throw new Error('No account address available');
   }
   return wallet.account.address;
 }
@@ -143,15 +146,15 @@ export async function callContractHandler(
 
   try {
     functionAbi = abi.find(
-      (item) => "name" in item && item.name === args.functionName
+      (item) => 'name' in item && item.name === args.functionName
     ) as AbiFunction;
   } catch (error) {
     throw new Error(`Invalid function name: ${args.functionName}`);
   }
 
   if (
-    functionAbi.stateMutability === "view" ||
-    functionAbi.stateMutability === "pure"
+    functionAbi.stateMutability === 'view' ||
+    functionAbi.stateMutability === 'pure'
   ) {
     const tx = await wallet.readContract({
       address: args.contractAddress,
@@ -193,14 +196,14 @@ export async function erc20BalanceHandler(
   const balance = await wallet.readContract({
     address: contractAddress,
     abi: erc20Abi,
-    functionName: "balanceOf",
-    args: [wallet.account?.address ?? "0x"],
+    functionName: 'balanceOf',
+    args: [wallet.account?.address ?? '0x'],
   });
 
   const decimals = await wallet.readContract({
     address: contractAddress,
     abi: erc20Abi,
-    functionName: "decimals",
+    functionName: 'decimals',
   });
 
   return formatUnits(balance, decimals);
@@ -224,7 +227,7 @@ export async function erc20TransferHandler(
   const decimals = await wallet.readContract({
     address: contractAddress,
     abi: erc20Abi,
-    functionName: "decimals",
+    functionName: 'decimals',
   });
 
   // Format units
@@ -233,7 +236,7 @@ export async function erc20TransferHandler(
   const tx = await wallet.simulateContract({
     address: contractAddress,
     abi: erc20Abi,
-    functionName: "transfer",
+    functionName: 'transfer',
     args: [toAddress, atomicUnits],
     account: wallet.account,
     chain: wallet.chain,
@@ -251,5 +254,36 @@ export async function getGasPriceHandler(
   wallet: WalletClient & PublicActions
 ): Promise<string> {
   const gasPrice = await wallet.getGasPrice();
-  return formatUnits(gasPrice, 9) + " Gwei";
+  return formatUnits(gasPrice, 9) + ' Gwei';
+}
+
+export async function getNativeBalanceHandler(
+  wallet: WalletClient & PublicActions,
+  args: z.infer<typeof GetNativeBalanceSchema>
+): Promise<string> {
+  const { useTestnet } = args;
+  if (!wallet.account?.address) {
+    throw new Error('No account address available');
+  }
+
+  const chain = useTestnet ? rootstockTestnet : rootstock;
+  const client = createWalletClient({
+    account: wallet.account,
+    chain,
+    transport: http(useTestnet ? RSK_RPC_URL_TESTNET : RSK_RPC_URL),
+  }).extend(publicActions);
+
+  try {
+    // Get balance on testnet first to test
+    const balance = await client.getBalance({
+      address: wallet.account.address,
+    });
+
+    return formatUnits(balance, 18);
+  } catch (error) {
+    console.error('Error getting balance:', error);
+    throw new Error(
+      `Failed to get balance: ${error instanceof Error ? error.message : 'Unknown error'}`
+    );
+  }
 }
